@@ -1,0 +1,19 @@
+---
+description: Quality gates and verification steps before considering a task done
+alwaysApply: true
+---
+
+# Quality and verification
+
+Before marking any task or phase as **done**, you must:
+
+1. **Run the test suite** – All tests pass. Fix or document any failure before reporting completion.
+2. **Run the linter (and formatter)** – No lint/format errors. Fix or document exceptions.
+3. **Confirm acceptance criteria** – Implementation matches the plan/spec for that task.
+4. **Update artifacts** – Plan/checklist and changelog (per project practice) are updated.
+
+Do not report completion without having run tests and lint. Follow project patterns and code style; address edge cases and security/performance where the spec requires it.
+
+For changes deployed to a real environment, extend verification into production: check error rates, pull traces, and confirm no regressions in monitoring dashboards. For changes touching shared code across repositories, use cross-repo code search to verify consistency. See **docs/quality-and-verification.md § 8** for tools and guidance.
+
+Full rules: **docs/quality-and-verification.md**.

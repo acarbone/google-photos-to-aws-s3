@@ -1,0 +1,25 @@
+---
+description: The Iron Law — agents must check the skill library before acting on any request
+alwaysApply: true
+---
+
+# The Iron Law
+
+**Before acting on any message — including casual or ambiguous ones — check whether a skill exists for the task at hand.**
+
+Skills live in `.cursor/skills/`. Each skill folder contains a `SKILL.md` describing when and how to use it. If a matching skill exists, follow its procedure exactly. Do not improvise a different approach.
+
+This rule has no exceptions. It is **not negotiable. Not optional.** It applies to every request, regardless of how small or routine the task appears.
+
+## Why this matters
+
+Agents optimize for the shortest path to an answer. The shortest path typically skips established procedures. The Iron Law makes bypassing skills structurally impossible by requiring the check to happen first — before any other reasoning about how to proceed.
+
+## How to apply
+
+1. Read the task or message.
+2. Scan `.cursor/skills/` for a skill whose description matches the task.
+3. If a match exists → follow the skill's `SKILL.md` procedure.
+4. If no match exists → proceed using judgment, and consider whether a new skill should be proposed.
+
+Full skill index: **SKILLS.md**.

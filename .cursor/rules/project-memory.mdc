@@ -1,0 +1,14 @@
+---
+description: Read PROJECT_MEMORY.md at the start of every session before planning or coding
+alwaysApply: true
+---
+
+# Project Memory
+
+At the start of every session, **read `PROJECT_MEMORY.md`** before planning or writing any code.
+
+This file contains institutional knowledge that is not derivable from the code or git history: bugs that required multiple attempts, architectural guardrails, hard prohibitions, and non-obvious project gotchas. Rules documented there override shortcuts and intuition.
+
+After any session that reveals a non-obvious rule, a repeated mistake, or a hard-won constraint: **update `PROJECT_MEMORY.md`** so the next session inherits it.
+
+Full guidance: **AGENTS.md § Project memory**.

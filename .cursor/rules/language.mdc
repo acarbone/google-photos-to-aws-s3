@@ -1,0 +1,8 @@
+---
+description: Use English for all AI responses in this project
+alwaysApply: true
+---
+
+# Language
+
+Always respond in **English** in this project: explanations, comments in code, documentation, and chat replies. Keep code identifiers and user-facing strings in English unless the user explicitly requests another language.
