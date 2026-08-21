@@ -463,7 +463,7 @@ No further review round required — both advisories are closed by the two edits
 - [x] `CHANGELOG.md` entry (via `changelog` skill)
 - [x] Run `pytest`, `ruff check`, `ruff format --check`, `mypy src/gphotos2s3` — all green
 - [x] This `plan.md` outcome note added at top after implementation (per `spec/feat/CONVENTIONS.md`)
-- [ ] Commit(s) created per current git config, referencing this plan
+- [x] Commit(s) created per current git config, referencing this plan — `fd529c6` on branch `feat/google-photos-s3-backup` (branched off `main` per this session's convention of not committing directly to the default branch)
 
 ## 14. Acceptance criteria (mechanically checkable)
 
