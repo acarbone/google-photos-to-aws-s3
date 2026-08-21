@@ -1,0 +1,71 @@
+{
+  "setup": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GPhotos2S3Operate",
+        "Effect": "Allow",
+        "Action": [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts"
+        ],
+        "Resource": [
+          "arn:aws:s3:::your-bucket-name/gphotos2s3*"
+        ]
+      },
+      {
+        "Sid": "GPhotos2S3ListBucket",
+        "Effect": "Allow",
+        "Action": [
+          "s3:ListBucket"
+        ],
+        "Resource": [
+          "arn:aws:s3:::your-bucket-name"
+        ]
+      },
+      {
+        "Sid": "GPhotos2S3BucketSetup",
+        "Effect": "Allow",
+        "Action": [
+          "s3:CreateBucket",
+          "s3:PutLifecycleConfiguration",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutEncryptionConfiguration"
+        ],
+        "Resource": [
+          "arn:aws:s3:::your-bucket-name"
+        ]
+      }
+    ]
+  },
+  "operate": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GPhotos2S3Operate",
+        "Effect": "Allow",
+        "Action": [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts"
+        ],
+        "Resource": [
+          "arn:aws:s3:::your-bucket-name/gphotos2s3*"
+        ]
+      },
+      {
+        "Sid": "GPhotos2S3ListBucket",
+        "Effect": "Allow",
+        "Action": [
+          "s3:ListBucket"
+        ],
+        "Resource": [
+          "arn:aws:s3:::your-bucket-name"
+        ]
+      }
+    ]
+  }
+}
