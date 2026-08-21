@@ -1,1 +1,19 @@
 .DS_Store
+
+# gphotos2s3 (Python package)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.gphotos2s3/
+*.db
+*.db-wal
+*.db-shm
