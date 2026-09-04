@@ -79,7 +79,7 @@ After deployment, agents and developers must check the real environment before d
 
 Do not assume that test success equals production correctness. Production state is the only ground truth.
 
-**Useful tools**: [Grafana MCP](https://github.com/grafana/mcp-grafana) provides agents with direct access to Grafana dashboards, traces, and error rate data via the Model Context Protocol — enabling agents to query production state without leaving the development workflow. See `docs/connectors.md` for the full connector inventory and access-tier governance, including how Grafana MCP is scoped for use by autonomous loops.
+**Useful tools**: [Grafana MCP](https://github.com/grafana/mcp-grafana) provides agents with direct access to Grafana dashboards, traces, and error rate data via the Model Context Protocol — enabling agents to query production state without leaving the development workflow.
 
 ### Code intelligence (cross-repository search)
 
@@ -149,9 +149,8 @@ bar, enforced by a different identity.
   tier A never writes code, tier B never pushes, tier C never merges to a
   protected branch. `loop-verifier` confirms this on every pass (see the
   output tiers table in `spec/design/06_loop_engineering.md`).
-- **Connector access is tiered, not just documented.** See
-  `docs/connectors.md` for the inventory, the read/write access level per
-  connector, and the wiring guide that scopes MCP credentials — not just
+- **Connector access is tiered, not just documented.** The read/write access
+  level per connector, and the wiring that scopes MCP credentials — not just
   prompt instructions — to a loop's declared output tier.
 - **Full checklist and governance**: see
   `spec/design/06_loop_engineering.md § Governance` for the complete,
