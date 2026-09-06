@@ -27,11 +27,20 @@ ready. This tool never does that last step for you.
 
 ```bash
 pip install gphotos2s3   # once published
-# or, from a checkout of this repo:
+```
+
+Or, from a checkout of this repo — create and activate a virtualenv first,
+then install into it:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # each new shell: re-run this before using gphotos2s3
 pip install -e .
 ```
 
-Requires Python 3.10+.
+Requires Python 3.10+. If `pip install -e .` complains about the Python
+version, it's picking up a global/older interpreter instead of the venv's —
+confirm with `python3 --version` and `which pip` after activating.
 
 ## Quick start
 
@@ -144,7 +153,8 @@ lost to chat history:
 - [`spec/feat/google-photos-s3-backup/plan.md`](spec/feat/google-photos-s3-backup/plan.md) — the full plan for this tool, including its multi-round architecture/consistency/risk review trail.
 - [`spec/feat/google-photos-s3-backup/research.md`](spec/feat/google-photos-s3-backup/research.md) — research behind the Google Takeout format and S3 mechanics this tool relies on.
 
-Run the test suite and quality gates:
+Run the test suite and quality gates (with `.venv` activated, per Install
+above):
 
 ```bash
 pip install -e ".[dev]"
