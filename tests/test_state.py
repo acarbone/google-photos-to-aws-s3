@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
+from pathlib import Path
 
 from gphotos2s3.state import open_state
 
@@ -91,11 +93,92 @@ def test_reset_to_pending_never_touches_attempts(state_store):
 def test_schema_migration_no_op(state_dir):
     with open_state(state_dir / "state.db") as store:
         cur = store.conn.execute("SELECT value FROM schema_meta WHERE key = 'version'")
-        assert cur.fetchone()["value"] == "1"
+        assert cur.fetchone()["value"] == "2"
     # Re-opening is a no-op, doesn't error or duplicate.
     with open_state(state_dir / "state.db") as store:
         cur = store.conn.execute("SELECT COUNT(*) AS n FROM schema_meta WHERE key = 'version'")
         assert cur.fetchone()["n"] == 1
+
+
+def _create_legacy_v1_db(path: Path) -> None:
+    """Simulates a pre-migration v1 database on disk: the `files` table
+    without a `taken_at` column, `schema_meta` pinned at version 1, and one
+    already-discovered row — the shape a real user's state DB has right
+    before upgrading to the chronological-s3-layout schema (§3.2)."""
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE files (
+            id              TEXT PRIMARY KEY,
+            zip_path        TEXT NOT NULL,
+            entry_name      TEXT NOT NULL,
+            sidecar_entry_name TEXT,
+            size_bytes      INTEGER NOT NULL,
+            sha256          TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            metadata_status TEXT NOT NULL DEFAULT 'not_found',
+            content_key     TEXT,
+            pointer_key     TEXT,
+            metadata_key    TEXT,
+            s3_bucket       TEXT,
+            content_deduped INTEGER NOT NULL DEFAULT 0,
+            error           TEXT,
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            discovered_at   TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO schema_meta (key, value) VALUES ('version', '1')")
+    conn.execute(
+        "INSERT INTO files (id, zip_path, entry_name, size_bytes, discovered_at, updated_at) "
+        "VALUES ('id1', 'z.zip', 'a.jpg', 100, 'now', 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_schema_migration_v1_to_v2_adds_taken_at_preserves_rows(state_dir):
+    db_path = state_dir / "state.db"
+    _create_legacy_v1_db(db_path)
+
+    with open_state(db_path) as store:
+        cur = store.conn.execute("SELECT value FROM schema_meta WHERE key = 'version'")
+        assert cur.fetchone()["value"] == "2"
+        row = store.get("id1")
+        assert row is not None
+        assert row.taken_at is None  # pre-existing row: column added as NULL
+        assert row.zip_path == "z.zip"  # data preserved, not wiped
+
+
+def test_schema_migration_race_two_processes_on_same_v1_db(state_dir):
+    """Two connections opening the same v1 DB at once must not crash with
+    'duplicate column name' — status/verify/retry-failed open the state DB
+    without the single-instance ProcessLock `run` takes (chronological-
+    s3-layout plan §3.2, risk-analyst High finding)."""
+    db_path = state_dir / "state.db"
+    _create_legacy_v1_db(db_path)
+
+    errors: list[Exception] = []
+
+    def opener() -> None:
+        try:
+            with open_state(db_path) as store:
+                store.get("id1")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=opener) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    with open_state(db_path) as store:
+        cur = store.conn.execute("SELECT value FROM schema_meta WHERE key = 'version'")
+        assert cur.fetchone()["value"] == "2"
 
 
 def test_concurrency_no_lost_writes_or_locking_errors(state_dir):

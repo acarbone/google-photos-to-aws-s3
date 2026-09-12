@@ -64,6 +64,58 @@ def test_resume_after_s3_success_but_db_commit_interrupted(
     assert body == b"content-bytes"
 
 
+def test_resume_after_upgrade_finds_content_at_legacy_flat_key(
+    s3_client, state_store, config, tmp_path: Path
+):
+    """A row left 'uploading' by a pre-chronological-layout version has no
+    taken_at and may have already uploaded its content under the OLD flat
+    key. Reconciliation must find it there rather than concluding 'not
+    uploaded' and re-uploading under the new unknown-date key
+    (chronological-s3-layout plan §3.4b — closes a reopening of the
+    round-2 dedup-race class on the first run after upgrading)."""
+    zip_path = tmp_path / "takeout-001.zip"
+    build_takeout_zip(zip_path, {"a/photo.jpg": b"content-bytes"})
+    discover_sources([zip_path], state_store)
+    row = next(state_store.iter_by_status("pending"))
+
+    import zipfile
+
+    from gphotos2s3 import uploader
+    from gphotos2s3.hashing import spool_and_hash
+
+    with zipfile.ZipFile(zip_path) as zf:
+        spooled, sha256_hex, size = spool_and_hash(zf, row.entry_name)
+    # taken_at intentionally NOT passed — simulates a row hashed by a
+    # pre-upgrade version, which had no such column (NULL after migration).
+    state_store.mark_hashed(row.id, sha256_hex, size)
+    state_store.mark_uploading(row.id)
+
+    legacy_c_key = f"{config.prefix}/content/{sha256_hex}.jpg"
+    s3_client.put_object(
+        Bucket=config.bucket,
+        Key=legacy_c_key,
+        Body=spooled.read(),
+        Metadata={"sha256": sha256_hex},
+    )
+    p_key = uploader.pointer_key(config.prefix, Path(zip_path).name, row.entry_name, sha256_hex)
+    uploader.upload_pointer(s3_client, config.bucket, p_key, legacy_c_key, sha256_hex, size)
+    spooled.close()
+    # PROCESS DIES HERE, then the tool is upgraded to the chronological
+    # layout before the next run.
+
+    reconciled = pipeline.reconcile_stuck_rows(state_store, s3_client, config.bucket, config.prefix)
+    assert reconciled == 1
+    final = state_store.get(row.id)
+    assert final.status == "uploaded"
+    assert final.content_key == legacy_c_key  # records where the bytes actually are
+
+    # No duplicate content object was created under the new-scheme key.
+    new_scheme_objs = s3_client.list_objects_v2(
+        Bucket=config.bucket, Prefix=f"{config.prefix}/content/unknown-date/"
+    )
+    assert new_scheme_objs.get("KeyCount", 0) == 0
+
+
 def test_resume_after_mid_multipart_no_visible_object(
     s3_client, state_store, config, tmp_path: Path
 ):

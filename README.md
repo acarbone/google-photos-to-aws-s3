@@ -96,6 +96,27 @@ Two things worth knowing:
   Every album occurrence still gets its own small "pointer" record and its
   own metadata in S3, so nothing about which album it belonged to is lost.
 
+## Browsing your backup in S3
+
+Uploaded content is organized chronologically wherever a capture date could
+be found embedded in the file itself (EXIF for photos, the video container's
+own creation-time field for `.mp4`/`.mov`/`.m4v`):
+
+```
+<prefix>/content/2020/05/01/2020-05-01_143022__<sha256>.jpg
+<prefix>/library/2020/05/01/2020-05-01_143022__<takeout-zip>/<original path>.pointer.json
+```
+
+A file with no extractable embedded date (common for screenshots,
+downloaded images, HEIC/HEIF, and less common video containers) lands in a
+flat `<prefix>/content/unknown-date/` bucket instead of a wrong guess — it's
+still backed up correctly, just not date-sorted. The full content hash stays
+in the filename either way, so nothing about deduplication changes: it's a
+human-readable prefix layered on top, not a replacement for it. See
+`spec/feat/chronological-s3-layout/plan.md` for the full design rationale
+(in particular, why the date comes from the file's own bytes rather than
+Google's sidecar JSON).
+
 ## Cost notes
 
 The default storage class is **S3 Glacier Instant Retrieval** — cheaper

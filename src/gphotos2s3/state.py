@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS files (
     sidecar_entry_name TEXT,
     size_bytes      INTEGER NOT NULL,
     sha256          TEXT,
+    taken_at        TEXT,               -- capture date embedded in the file's own bytes
+                                         -- (content_date.extract_taken_at); NULL if none
+                                         -- found. Persisted at mark_hashed time so
+                                         -- reconcile_stuck_rows never needs to reopen the
+                                         -- zip to recompute content_key (schema v2).
     status          TEXT NOT NULL DEFAULT 'pending',
     metadata_status TEXT NOT NULL DEFAULT 'not_found',
     content_key     TEXT,
@@ -76,6 +81,7 @@ class FileRow:
     sidecar_entry_name: str | None
     size_bytes: int
     sha256: str | None
+    taken_at: str | None
     status: str
     metadata_status: str
     content_key: str | None
@@ -97,6 +103,7 @@ class FileRow:
             sidecar_entry_name=row["sidecar_entry_name"],
             size_bytes=row["size_bytes"],
             sha256=row["sha256"],
+            taken_at=row["taken_at"],
             status=row["status"],
             metadata_status=row["metadata_status"],
             content_key=row["content_key"],
@@ -149,22 +156,42 @@ class StateStore:
         self._apply_migrations()
 
     def _apply_migrations(self) -> None:
-        """Trivial migration runner (architect review F8): checks
+        """Migration runner (architect review F8): checks
         schema_meta['version'] on every open and applies any pending
-        numbered migration in order. v1 has no predecessor, so this is a
-        no-op today — the mechanism exists before it's ever needed, so a
-        future schema change never forces 'delete your state DB and lose
-        all resume progress'."""
+        numbered migration in order, so a schema change never forces
+        'delete your state DB and lose all resume progress'.
+
+        v1->v2 (chronological-s3-layout plan §3.2) adds `files.taken_at`.
+        This is the first migration this codebase has ever actually had to
+        run (v1 had no predecessor). `status`/`verify`/`retry-failed` open
+        the state DB without the single-instance `ProcessLock` that `run`
+        takes, so two processes could open the same v1 DB at once and both
+        reach the `ALTER TABLE` below — SQLite's own per-statement locking
+        (governed by `busy_timeout`, already set in `_connect`) serializes
+        them regardless: the loser blocks until the winner's ALTER commits,
+        then runs its own ALTER against the now-migrated schema and hits
+        'duplicate column', which is caught below as an already-applied
+        no-op — the same catch that makes this method a harmless repeat for
+        a brand-new DB too (`_SCHEMA_SQL` already creates `taken_at`
+        directly there, so its ALTER always hits this exact path)."""
         cur = self.conn.execute("SELECT value FROM schema_meta WHERE key = 'version'")
         row = cur.fetchone()
         current = int(row["value"]) if row else 0
-        if current < 1:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
-            self.conn.commit()
-        # Future migrations: `if current < 2: ...` etc.
+        if current >= SCHEMA_VERSION:
+            return
+        if current < 2:
+            try:
+                self.conn.execute("ALTER TABLE files ADD COLUMN taken_at TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+            current = 2
+        # Future migrations: `if current < 3: ...` before the version write.
+        self.conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
+            (str(current),),
+        )
+        self.conn.commit()
 
     # -- discovery -----------------------------------------------------
 
@@ -218,10 +245,18 @@ class StateStore:
     # -- status transitions (each is its own immediate commit — crash-safety
     #    depends on never batching these, per research.md §4) ---------------
 
-    def mark_hashed(self, id_: str, sha256: str, size_bytes: int) -> None:
+    def mark_hashed(
+        self, id_: str, sha256: str, size_bytes: int, taken_at: str | None = None
+    ) -> None:
+        """`taken_at` (content_date.extract_taken_at's result, an ISO-8601
+        string or None) is persisted here — before `mark_uploading` ever
+        runs — so reconcile_stuck_rows can recompute the exact same
+        content_key a crashed row would have used without reopening the
+        zip (chronological-s3-layout plan §3.2)."""
         self.conn.execute(
-            "UPDATE files SET sha256 = ?, size_bytes = ?, updated_at = ? WHERE id = ?",
-            (sha256, size_bytes, _utcnow(), id_),
+            "UPDATE files SET sha256 = ?, size_bytes = ?, taken_at = ?, updated_at = ? "
+            "WHERE id = ?",
+            (sha256, size_bytes, taken_at, _utcnow(), id_),
         )
         self.conn.commit()
 

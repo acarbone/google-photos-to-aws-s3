@@ -1,5 +1,32 @@
 # Changelog – Agent work
 
+## [2026-09-06] Chronological S3 layout [spec: spec/feat/chronological-s3-layout/plan.md]
+
+**Context**: User tested a real run — upload works, but the S3 layout (hash-named `content/` objects, path-mirroring `library/` JSON pointers) was hard to browse. Ask: date+time filenames, `YYYY/MM/DD` folder hierarchy. Explored via `/goal`, with one risk-analyst review round before implementation since the change touches `content_key`'s pure-function invariant — a formally tested Critical-bug fix from the original build (`spec/feat/google-photos-s3-backup/plan.md` §6/§7, `test_state_rebuild.py`).
+
+**Completed**
+- **Two rejected alternatives, both for good reason** (see plan §2): duplicating bytes at a friendly date path (doubles S3 storage for every unique file — user explicitly ruled this out); deriving the date from Google's sidecar JSON (`photoTakenTime`) — per-occurrence external data that could make `content_key` occurrence-dependent again, reopening the round-2-Critical dedup-race class.
+- **Chosen design**: the date comes from metadata embedded in the file's own bytes (EXIF `DateTimeOriginal` for photos, `mvhd` box for MP4/MOV/M4V) — a true pure function of content, so `content_key`'s guarantee is extended, not weakened.
+- **`src/gphotos2s3/content_date.py`** (new): `extract_taken_at()` — `exifread`-based EXIF parsing for JPEG/TIFF-RAW, a hand-rolled ISO-BMFF `mvhd` box walker for video (handles 64-bit `largesize`, `size==0`-to-EOF, `creation_time==0`-means-unset, and never reads a box body it can skip via seek — verified against a synthetic 2MB `mdat`-before-`moov` fixture). Never raises — a malformed/placeholder date (`"0000:00:00 00:00:00"`, common in the wild) returns `None`, not an exception, since an uncaught one would misclassify as a systemic failure and halt the whole run.
+- **Schema migration v1→v2** (`state.py`): nullable `files.taken_at` column, persisted at `mark_hashed` time so `reconcile_stuck_rows` never needs to reopen the zip. First migration this codebase has ever actually executed — the race between two unlocked processes (`status`/`verify`/`retry-failed` don't take the single-instance lock `run` does) both hitting `ALTER TABLE` on the same v1 DB is closed by SQLite's own statement-level locking plus a "duplicate column" catch, not a Python-level transaction (see `amendments.md` for why the originally-planned `BEGIN IMMEDIATE` approach was simplified).
+- **`uploader.py`**: `content_key`/`pointer_key`/`metadata_key` take an optional `taken_at`, defaulting to a flat `unknown-date` bucket. Full `sha256_hex` stays embedded verbatim in every content key — the date prefix is a browsing aid layered on top, never a replacement for the collision-proof identifier.
+- **`pipeline.py`**: two risk-analyst Critical findings closed before implementation, not after — (1) canonical-key reuse via `state.find_uploaded_by_sha256` (previously defined, unused) so a duplicate row discovered after a `content_date.py` code change still lands on the already-recorded key, not a possibly-different fresh one; (2) `reconcile_stuck_rows` falls back to the pre-migration flat content key when the new-scheme key 404s, so a row stuck `uploading` from before this upgrade doesn't get silently re-uploaded under a second key on the first run after upgrading.
+- **Tests**: `test_content_date.py` (new, 12 tests, all hand-crafted byte fixtures — no image/video library needed); updates + new regression tests across `test_uploader.py`, `test_state.py` (v1→v2 migration + concurrent-migration-race), `test_pipeline_resume.py` (legacy-key reconciliation), `test_dedup.py` (version-drift reuse — the one test structured to catch a cross-version divergence rather than a cross-concurrency one). 94 tests pass total (was 77).
+- **`README.md`**: new "Browsing your backup in S3" section documenting the layout and linking to the plan for the design rationale.
+- **`pyproject.toml`**: added `exifread>=3.0` (pure-Python, MIT) — the project's first new runtime dependency since the original build.
+
+**Pending / Next steps**
+- Old flat-key layout and new date-organized layout coexist in any bucket that already had uploads before this change — a one-off backfill/rename pass is a reasonable follow-up, explicitly out of scope here (plan §7).
+- HEIC/HEIF, AVI, MKV, 3GP get no embedded-date extraction (land in `unknown-date`) — documented as a deliberate v1 limitation, not fixed.
+- No real upload was executed against real AWS, per this repo's existing testing scope.
+
+**Learnings**
+- **A tested invariant needs the same scrutiny applied to whatever's proposed for extending it — before writing code, not after.** The risk-analyst pass caught that "pure function of content bytes" is true *within one code version* but not automatically *across time* (a future `content_date.py` change could make two rows with the same sha256 compute different keys) — a version-drift reopening of the exact bug class the original build's round-2 fix closed, distinct from the sidecar-based reopening already rejected in the plan's first draft. Both were closed in the plan before implementation started.
+- **Manually issuing `BEGIN`/`COMMIT` through Python's `sqlite3` module is not the simplest way to get transactional locking.** SQLite's own per-statement locking, already governed by the `busy_timeout` this codebase had set from the start, gives the same serialization guarantee with no version-dependent transaction-handling surface to reason about — see `amendments.md`.
+- **Pre-existing, unrelated test failures should be identified via `git stash`, not assumed.** 3 of `test_cli.py`'s failures (rich ANSI codes leaking into `capsys` output) turned out to be present on a clean checkout, unrelated to this session's work — confirmed before attributing them to this change.
+
+---
+
 ## [2026-08-21] Google Photos → AWS S3 backup tool [spec: spec/feat/google-photos-s3-backup/plan.md]
 
 **Context**: Full Tier 2 (research → plan → 4-round multi-agent review cycle → implementation) build of `gphotos2s3`, a freely-distributable, open-source Python CLI that backs up a Google Takeout export of Google Photos to the user's own AWS S3 bucket. Business goal: free up Google Account storage by leveraging low-cost S3 storage, without executing any real upload as part of this session — implementation and mocked tests only.
