@@ -16,7 +16,7 @@ the scope declared by the loop's `loop.md` charter.
 
 Scan the sources the charter lists — repo files, CI status, open
 `spec/feat/*/plan.md` checklists, `PROJECT_MEMORY.md` "Recurring patterns",
-and read-tier connectors (`docs/connectors.md`) — and classify what is found
+and read-tier connectors — and classify what is found
 as actionable or non-actionable, per the `loop-triage` procedure.
 
 ---

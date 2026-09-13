@@ -8,11 +8,22 @@ without a local state DB, independently arrives at the same answer for
 dedup correctness cannot be broken by a worker race or a state-DB loss,
 because there is no runtime-assigned ownership left to get wrong.
 
+Chronological-layout redesign (see
+spec/feat/chronological-s3-layout/plan.md §3.3): `content_key` is now a
+pure function of (sha256, normalized extension, taken_at) — but `taken_at`
+is itself *always* derived from those same content bytes
+(content_date.extract_taken_at), never from row/path/sidecar data, so the
+pure-function guarantee above is extended, not weakened. The full
+`sha256_hex` stays embedded in every key verbatim (never shortened) —
+the date folder/prefix is a human sorting aid layered on top of the exact
+same collision-proof identifier, not a replacement for it.
+
 No zip file handling lives here — that's discovery.py/pipeline.py's job.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -60,28 +71,90 @@ def _truncate_key(key: str, sha256_hex: str) -> str:
     return truncated + suffix
 
 
-def content_key(prefix: str, sha256_hex: str, ext: str) -> str:
-    """Pure function of (sha256, normalized extension) — same content
-    always resolves to the same key, regardless of which row computes it,
-    regardless of processing order, regardless of whether the local state
-    DB has ever seen this content before. This is the fix for the
-    round-2-Critical dedup-after-state-loss race."""
+def _date_parts(taken_at: str) -> tuple[str, str, str, str]:
+    """(yyyy, mm, dd, HHMMSS) for a persisted taken_at ISO string. Uses
+    fromisoformat rather than fixed-width slicing since the string's width
+    varies with/without a time component. Formatting-only — taken_at is a
+    naive device/camera local time with no reliable offset, so this must
+    never round-trip through astimezone() or any timezone-aware
+    conversion (chronological-s3-layout plan §3.3)."""
+    dt = datetime.datetime.fromisoformat(taken_at)
+    return (
+        f"{dt.year:04d}",
+        f"{dt.month:02d}",
+        f"{dt.day:02d}",
+        f"{dt.hour:02d}{dt.minute:02d}{dt.second:02d}",
+    )
+
+
+def _date_folder_and_prefix(taken_at: str | None) -> tuple[str, str]:
+    """(date_folder, filename_date_prefix) for the library/ tree. Falls
+    back to a flat 'unknown-date' bucket (no prefix) when no embedded
+    capture date was found for this content."""
+    if taken_at is None:
+        return "unknown-date", ""
+    yyyy, mm, dd, compact = _date_parts(taken_at)
+    return f"{yyyy}/{mm}/{dd}", f"{yyyy}-{mm}-{dd}_{compact}__"
+
+
+def content_key(prefix: str, sha256_hex: str, ext: str, taken_at: str | None = None) -> str:
+    """Pure function of (sha256, normalized extension, taken_at) — and
+    taken_at is itself always derived from the same content bytes
+    (content_date.extract_taken_at), never from row/path/sidecar data, so
+    same content still always resolves to the same key regardless of which
+    row computes it, regardless of processing order, regardless of whether
+    the local state DB has ever seen this content before. This is the fix
+    for the round-2-Critical dedup-after-state-loss race, extended (not
+    weakened) by the chronological-layout redesign — see
+    spec/feat/chronological-s3-layout/plan.md §2/§3.3. `taken_at is None`
+    (no embedded date found) lands in a flat 'unknown-date' bucket rather
+    than a wrong guess. The full sha256_hex is always embedded verbatim in
+    the filename — the date prefix is a browsing aid, not a replacement
+    for the collision-proof identifier."""
     normalized_ext = ext.lower()
-    return f"{prefix}/content/{sha256_hex}{normalized_ext}"
+    if taken_at is None:
+        return f"{prefix}/content/unknown-date/{sha256_hex}{normalized_ext}"
+    yyyy, mm, dd, compact = _date_parts(taken_at)
+    return (
+        f"{prefix}/content/{yyyy}/{mm}/{dd}/"
+        f"{yyyy}-{mm}-{dd}_{compact}__{sha256_hex}{normalized_ext}"
+    )
 
 
-def pointer_key(prefix: str, zip_basename: str, entry_name: str, sha256_hex: str) -> str:
-    """Takes exactly the same two inputs (zip_basename, entry_name) as row
-    `id` itself (discovery.py). Two rows can only collide on pointer_key if
-    they would also collide on `id` — and an `id` collision is already
-    handled at discovery time by INSERT OR IGNORE. No separate collision
-    guard needed: uniqueness is inherited directly from row identity."""
-    key = f"{prefix}/library/{_sanitize(zip_basename)}/{_sanitize(entry_name)}.pointer.json"
+def pointer_key(
+    prefix: str,
+    zip_basename: str,
+    entry_name: str,
+    sha256_hex: str,
+    taken_at: str | None = None,
+) -> str:
+    """Takes exactly the same two path inputs (zip_basename, entry_name) as
+    row `id` itself (discovery.py), untouched — the date folder/prefix is
+    layered in front of them, not substituted for them. Two rows can only
+    collide on pointer_key if they would also collide on `id` — and an
+    `id` collision is already handled at discovery time by INSERT OR
+    IGNORE. No separate collision guard needed: uniqueness is inherited
+    directly from row identity, exactly as before this redesign."""
+    date_folder, date_prefix = _date_folder_and_prefix(taken_at)
+    key = (
+        f"{prefix}/library/{date_folder}/{date_prefix}"
+        f"{_sanitize(zip_basename)}/{_sanitize(entry_name)}.pointer.json"
+    )
     return _truncate_key(key, sha256_hex)
 
 
-def metadata_key(prefix: str, zip_basename: str, entry_name: str, sha256_hex: str) -> str:
-    key = f"{prefix}/library/{_sanitize(zip_basename)}/{_sanitize(entry_name)}.metadata.json"
+def metadata_key(
+    prefix: str,
+    zip_basename: str,
+    entry_name: str,
+    sha256_hex: str,
+    taken_at: str | None = None,
+) -> str:
+    date_folder, date_prefix = _date_folder_and_prefix(taken_at)
+    key = (
+        f"{prefix}/library/{date_folder}/{date_prefix}"
+        f"{_sanitize(zip_basename)}/{_sanitize(entry_name)}.metadata.json"
+    )
     return _truncate_key(key, sha256_hex)
 
 

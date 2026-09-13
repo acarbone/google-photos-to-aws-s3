@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "boto3>=1.34",
     "rich>=13.7",
+    "exifread>=3.0",
 ]
 
 [project.optional-dependencies]

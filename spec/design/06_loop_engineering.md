@@ -71,7 +71,7 @@ not by ambition.
 | Automations | `/loop`, `/goal`, `/schedule`, or an external scheduler, invoking the `loop-triage` skill |
 | Worktrees | `docs/worktrees.md` |
 | Skills | `loop-charter`, `loop-triage`, `loop-verify` (existing skill mechanism, unchanged) |
-| Connectors | `docs/connectors.md` — read/write permission tiers |
+| Connectors | Read/write permission tiers, declared per loop |
 | Sub-agents | `explorer` (discovery) → implementer → `loop-verifier` (QA), never one identity |
 | External memory | `spec/loop/<loop-name>/{loop,state,inbox,archive}.md` |
 
@@ -212,8 +212,8 @@ default.
 9. **Stalls halt.** Red-flag conditions stop the loop and produce a finding;
    they never trigger an unattended retry or a raised turn cap.
 
-**A note on enforcement layers**: the connector boundary (`docs/connectors.md`)
-is enforced at the credential layer — a tier-A loop cannot load a write-tier
+**A note on enforcement layers**: the connector boundary is enforced at the
+credential layer — a tier-A loop cannot load a write-tier
 MCP server, regardless of what any prompt says. The local-filesystem boundary
 ("explorer never edits source files," "tier A never writes code") does not
 currently have an equivalent structural backstop in this template — it is
@@ -373,8 +373,8 @@ CI is one scheduler among several and is **never required**: tier-A loops run
 fine from a developer's session via `/loop` or `/schedule`. The example below
 exists to show the *shape* — a scheduled pipeline invoking `loop-triage`,
 committing the updated `spec/loop/<name>/` files back on a branch — not to
-imply a loop needs a pipeline. GitLab CI only, matching the connector stack
-in `docs/connectors.md`; there is no GitHub Actions variant.
+imply a loop needs a pipeline. GitLab CI only; there is no GitHub Actions
+variant.
 
 ```yaml
 # .gitlab-ci.yml (excerpt) — optional, tier-A loop on a schedule

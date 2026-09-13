@@ -19,6 +19,7 @@ def _row(**overrides) -> FileRow:
         sidecar_entry_name=None,
         size_bytes=10,
         sha256="deadbeef",
+        taken_at=None,
         status="uploaded",
         metadata_status="not_found",
         content_key=None,
@@ -38,13 +39,49 @@ def _row(**overrides) -> FileRow:
 def test_content_key_pure_function_of_sha256_and_ext():
     k1 = uploader.content_key("gphotos2s3", "abc123", ".jpg")
     k2 = uploader.content_key("gphotos2s3", "abc123", ".jpg")
-    assert k1 == k2 == "gphotos2s3/content/abc123.jpg"
+    assert k1 == k2 == "gphotos2s3/content/unknown-date/abc123.jpg"
 
 
 def test_content_key_normalizes_extension_case():
     k1 = uploader.content_key("p", "abc", ".JPG")
     k2 = uploader.content_key("p", "abc", ".jpg")
     assert k1 == k2
+
+
+def test_content_key_groups_by_date_when_taken_at_present():
+    key = uploader.content_key("p", "abc123", ".jpg", "2020-05-01T14:30:22")
+    assert key == "p/content/2020/05/01/2020-05-01_143022__abc123.jpg"
+
+
+def test_content_key_pure_function_including_taken_at():
+    """Same (sha256, ext, taken_at) always resolves to the same key,
+    regardless of how many times or in what order it's computed — the
+    property reconcile_stuck_rows and the round-2 dedup-race fix depend on
+    (chronological-s3-layout plan §2/§3.3)."""
+    k1 = uploader.content_key("p", "abc123", ".jpg", "2020-05-01T14:30:22")
+    k2 = uploader.content_key("p", "abc123", ".jpg", "2020-05-01T14:30:22")
+    assert k1 == k2
+
+
+def test_content_key_same_taken_at_different_sha256_never_collide():
+    """The full sha256 stays embedded verbatim in the filename — the date
+    prefix is a browsing aid layered on top, never a replacement for the
+    collision-proof identifier."""
+    k1 = uploader.content_key("p", "sha-one", ".jpg", "2020-05-01T14:30:22")
+    k2 = uploader.content_key("p", "sha-two", ".jpg", "2020-05-01T14:30:22")
+    assert k1 != k2
+
+
+def test_pointer_key_and_metadata_key_group_by_date_when_taken_at_present():
+    p_key = uploader.pointer_key("p", "z.zip", "img.jpg", "sha1", "2020-05-01T14:30:22")
+    m_key = uploader.metadata_key("p", "z.zip", "img.jpg", "sha1", "2020-05-01T14:30:22")
+    assert p_key == "p/library/2020/05/01/2020-05-01_143022__z.zip/img.jpg.pointer.json"
+    assert m_key == "p/library/2020/05/01/2020-05-01_143022__z.zip/img.jpg.metadata.json"
+
+
+def test_pointer_key_falls_back_to_unknown_date_bucket():
+    key = uploader.pointer_key("p", "z.zip", "img.jpg", "sha1")
+    assert key == "p/library/unknown-date/z.zip/img.jpg.pointer.json"
 
 
 def test_pointer_key_distinct_for_same_entry_name_different_zip_basename():

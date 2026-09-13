@@ -21,8 +21,8 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
+from gphotos2s3 import content_date, uploader
 from gphotos2s3 import metadata as metadata_mod
-from gphotos2s3 import uploader
 from gphotos2s3.config import Config
 from gphotos2s3.discovery import UnsafePathError, discover_sources
 from gphotos2s3.hashing import spool_and_hash
@@ -193,9 +193,11 @@ def reconcile_stuck_rows(state: StateStore, s3_client: Any, bucket: str, prefix:
     `content_key`/`pointer_key` are only ever persisted to a row on success
     (mark_uploaded) — a row stuck 'uploading' never had them written. They
     must therefore be RECOMPUTED here from the row's already-persisted
-    sha256 + zip/entry identity (the same pure functions process_one uses),
-    not read off the row. sha256 is guaranteed present for any 'uploading'
-    row: mark_hashed always commits before mark_uploading does."""
+    sha256 + taken_at + zip/entry identity (the same pure functions
+    process_one uses), not read off the row. sha256 and taken_at are both
+    guaranteed present for any 'uploading' row: mark_hashed always commits
+    both before mark_uploading does (a row from before the taken_at column
+    existed has taken_at=NULL, handled by the legacy-key fallback below)."""
     reconciled = 0
     for row in list(state.iter_by_status("uploading")):
         if row.sha256 is None:
@@ -204,16 +206,32 @@ def reconcile_stuck_rows(state: StateStore, s3_client: Any, bucket: str, prefix:
             continue
 
         ext = uploader.guess_extension(row.entry_name)
-        c_key = uploader.content_key(prefix, row.sha256, ext)
+        c_key = uploader.content_key(prefix, row.sha256, ext, row.taken_at)
         zip_basename = Path(row.zip_path).name
         try:
-            p_key = uploader.pointer_key(prefix, zip_basename, row.entry_name, row.sha256)
+            p_key = uploader.pointer_key(
+                prefix, zip_basename, row.entry_name, row.sha256, row.taken_at
+            )
         except Exception:  # noqa: BLE001 - an unsafe entry can't have reached 'uploading'
             state.reset_to_pending(row.id)
             reconciled += 1
             continue
 
         content_ok = uploader.already_uploaded(s3_client, bucket, c_key, row.sha256)
+        if not content_ok:
+            # A row left 'uploading' by a pre-upgrade version has no
+            # taken_at (NULL) and may have already uploaded its content
+            # under the old flat key — check there before concluding "not
+            # uploaded" (chronological-s3-layout plan §3.4b). Without this,
+            # the very first run after upgrading would 404 on the new
+            # unknown-date key, reset to pending, and re-upload the same
+            # bytes under a second key — orphaning the original object and
+            # reopening the round-2 dedup-race class this reconciliation
+            # exists to prevent.
+            legacy_key = f"{prefix}/content/{row.sha256}{ext}"
+            if uploader.already_uploaded(s3_client, bucket, legacy_key, row.sha256):
+                c_key = legacy_key
+                content_ok = True
         pointer_ok = content_ok and uploader.already_uploaded(s3_client, bucket, p_key, row.sha256)
         if content_ok and pointer_ok:
             state.mark_uploaded(
@@ -272,13 +290,37 @@ def process_one(
                 raise DiskSpaceError(str(exc)) from exc
             raise
 
-        state.mark_hashed(row.id, sha256_hex, size)
+        ext = uploader.guess_extension(row.entry_name)
+        # Pure function of these same spooled bytes (content_date module
+        # docstring) — computed once here and reused at every key-building
+        # call site below, never re-derived independently (chronological-
+        # s3-layout plan §3.4, risk-analyst Low finding).
+        taken_at_dt = content_date.extract_taken_at(spooled, ext)
+        taken_at = taken_at_dt.isoformat() if taken_at_dt is not None else None
+
+        state.mark_hashed(row.id, sha256_hex, size, taken_at)
         state.mark_uploading(row.id)
 
-        ext = uploader.guess_extension(row.entry_name)
-        c_key = uploader.content_key(config.prefix, sha256_hex, ext)
         zip_basename = zip_path.name
-        p_key = uploader.pointer_key(config.prefix, zip_basename, row.entry_name, sha256_hex)
+        # Canonical-key reuse (plan §3.4a): if this content already has a
+        # successful upload recorded locally, reuse its content_key rather
+        # than recomputing one from this row's own taken_at. Within one run
+        # this is a no-op (extract_taken_at is a pure function of the same
+        # bytes, so a fresh computation would agree anyway) — it matters
+        # across time: if content_date.py's logic ever changes between
+        # runs, a duplicate row discovered later must still land on the
+        # already-recorded key, not a possibly-different fresh one. Residual,
+        # accepted: this can't help if the local state DB itself was lost
+        # *and* the code changed in between — a narrower version of the
+        # already-accepted "full state-DB loss" scenario, not a new risk.
+        existing = state.find_uploaded_by_sha256(sha256_hex)
+        if existing is not None and existing.content_key:
+            c_key = existing.content_key
+        else:
+            c_key = uploader.content_key(config.prefix, sha256_hex, ext, taken_at)
+        p_key = uploader.pointer_key(
+            config.prefix, zip_basename, row.entry_name, sha256_hex, taken_at
+        )
 
         sha_lock = sha256_locks.get(sha256_hex)
         with sha_lock:
@@ -292,7 +334,9 @@ def process_one(
         m_key = None
         metadata_status = "not_found"
         if row.sidecar_entry_name:
-            m_key = uploader.metadata_key(config.prefix, zip_basename, row.entry_name, sha256_hex)
+            m_key = uploader.metadata_key(
+                config.prefix, zip_basename, row.entry_name, sha256_hex, taken_at
+            )
             metadata_dict = _open_zip_entry_metadata(row.zip_path, row.sidecar_entry_name)
             if metadata_dict:
                 try:

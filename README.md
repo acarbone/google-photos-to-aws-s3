@@ -27,11 +27,20 @@ ready. This tool never does that last step for you.
 
 ```bash
 pip install gphotos2s3   # once published
-# or, from a checkout of this repo:
+```
+
+Or, from a checkout of this repo — create and activate a virtualenv first,
+then install into it:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # each new shell: re-run this before using gphotos2s3
 pip install -e .
 ```
 
-Requires Python 3.10+.
+Requires Python 3.10+. If `pip install -e .` complains about the Python
+version, it's picking up a global/older interpreter instead of the venv's —
+confirm with `python3 --version` and `which pip` after activating.
 
 ## Quick start
 
@@ -86,6 +95,27 @@ Two things worth knowing:
 - **The same photo in multiple albums**: only the bytes are deduplicated.
   Every album occurrence still gets its own small "pointer" record and its
   own metadata in S3, so nothing about which album it belonged to is lost.
+
+## Browsing your backup in S3
+
+Uploaded content is organized chronologically wherever a capture date could
+be found embedded in the file itself (EXIF for photos, the video container's
+own creation-time field for `.mp4`/`.mov`/`.m4v`):
+
+```
+<prefix>/content/2020/05/01/2020-05-01_143022__<sha256>.jpg
+<prefix>/library/2020/05/01/2020-05-01_143022__<takeout-zip>/<original path>.pointer.json
+```
+
+A file with no extractable embedded date (common for screenshots,
+downloaded images, HEIC/HEIF, and less common video containers) lands in a
+flat `<prefix>/content/unknown-date/` bucket instead of a wrong guess — it's
+still backed up correctly, just not date-sorted. The full content hash stays
+in the filename either way, so nothing about deduplication changes: it's a
+human-readable prefix layered on top, not a replacement for it. See
+`spec/feat/chronological-s3-layout/plan.md` for the full design rationale
+(in particular, why the date comes from the file's own bytes rather than
+Google's sidecar JSON).
 
 ## Cost notes
 
@@ -144,7 +174,8 @@ lost to chat history:
 - [`spec/feat/google-photos-s3-backup/plan.md`](spec/feat/google-photos-s3-backup/plan.md) — the full plan for this tool, including its multi-round architecture/consistency/risk review trail.
 - [`spec/feat/google-photos-s3-backup/research.md`](spec/feat/google-photos-s3-backup/research.md) — research behind the Google Takeout format and S3 mechanics this tool relies on.
 
-Run the test suite and quality gates:
+Run the test suite and quality gates (with `.venv` activated, per Install
+above):
 
 ```bash
 pip install -e ".[dev]"

@@ -28,15 +28,14 @@ whenever the loop's scope, cadence, or output tier changes.
 4. **Write the abort criteria**: a turn cap, the no-improvement rule, and the
    red-flag halts.
 5. **Declare scope explicitly on both sides**: what it reads, and what it
-   must never touch. Name the connectors and their access level per
-   `docs/connectors.md`.
+   must never touch. Name the connectors and their access level.
 6. **Declare cadence, fan-out, and the models** for explorer / implementer /
    verifier. Check the fan-out against the attention budget (default 3
    concurrent loops per reviewer).
 7. **Name the human owner and the audit cadence** — who reads the output, how
    often, and how deeply.
 8. **For tiers B and C, confirm the credential set matches the tier** before
-   the first run (`docs/connectors.md` wiring guide).
+   the first run.
 
 ---
 
